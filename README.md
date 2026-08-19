@@ -4,40 +4,8 @@ MDB is an MCP server that provides AI assistants with semantic access to your Po
 
 ## Architecture
 
-```
-PostgreSQL Database
-       │
-       ▼
-┌──────────────┐
-│  SQLAlchemy   │  ← Dynamic schema introspection
-│  inspect()    │    (tables, columns, types, PKs, FKs)
-└──────┬───────┘
-       │
-       ▼
-┌──────────────┐
-│   Schema      │
-│   Documents   │
-└──────┬───────┘
-       │
-       ▼
-┌──────────────┐
-│   Gemini      │  ← gemini-embedding-001 (768 dimensions)
-│   Embeddings  │
-└──────┬───────┘
-       │
-       ▼
-┌──────────────┐
-│   ChromaDB    │  ← Local persistent vector collection (cosine similarity)
-│   Collection  │
-└──────┬───────┘
-       │
-       ▼
-┌──────────────┐
-│   MCP Server  │  ← Tools: ping, get_schema, search_schema, get_table_context, resync_schema
-│  (Streamable  │    Served over HTTP at /mcp
-│   HTTP)       │    Health check at /health
-└──────────────┘
-```
+![MDB Architecture](assets/mdb-architecture.png)
+
 
 ## Prerequisites
 
@@ -158,6 +126,8 @@ MDB/
 │   ├── embeddings.py      # Gemini embedding generation
 │   ├── server.py          # MCP server (Streamable HTTP) with tool definitions
 │   └── vector_store.py    # ChromaDB indexing and semantic search
+├── assets/
+│   └── mdb-architecture.png
 ├── .env.example           # Environment variable template
 ├── .gitignore
 └── requirements.txt       # Python dependencies
