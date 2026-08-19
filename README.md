@@ -4,7 +4,7 @@ MDB is an MCP server that provides AI assistants with semantic access to your Po
 
 ## Architecture
 
-<img src="assets/mdb-architecture.png" width="600" alt="MDB Architecture" />
+<img src="assets/mdb-architecture.png" width="400" alt="MDB Architecture" />
 
 
 
