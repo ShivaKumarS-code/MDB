@@ -1,6 +1,6 @@
 # MDB — Model Data Bridge
 
-MDB is an MCP server that provides AI assistants with semantic access to your PostgreSQL database schema. It combines PostgreSQL introspection, Gemini embeddings, and Pinecone vector search to enable natural-language schema discovery.
+MDB is an MCP server that provides AI assistants with semantic access to your PostgreSQL database schema. It combines PostgreSQL introspection, Gemini embeddings, and ChromaDB vector search to enable natural-language schema discovery.
 
 ## Architecture
 
@@ -27,8 +27,8 @@ PostgreSQL Database
        │
        ▼
 ┌──────────────┐
-│   Pinecone    │  ← Serverless vector index (cosine similarity)
-│   Index       │
+│   ChromaDB    │  ← Local persistent vector collection (cosine similarity)
+│   Collection  │
 └──────┬───────┘
        │
        ▼
@@ -44,7 +44,6 @@ PostgreSQL Database
 - Python 3.11+
 - A PostgreSQL database
 - A [Gemini API key](https://ai.google.dev/)
-- A [Pinecone account](https://www.pinecone.io/) with a serverless index
 
 ## Setup
 
@@ -76,8 +75,6 @@ Edit `.env`:
 ```env
 DATABASE_URL=postgresql://user:password@localhost:5432/your_database
 GEMINI_API_KEY=your_gemini_api_key
-PINECONE_API_KEY=your_pinecone_api_key
-PINECONE_INDEX_NAME=mdb
 ```
 
 Optional settings:
@@ -86,14 +83,17 @@ Optional settings:
 # PostgreSQL schema to introspect (default: public)
 DATABASE_SCHEMA=public
 
+# ChromaDB data storage path (default: ./chroma_data)
+CHROMA_DATA_DIR=./chroma_data
+
 # MDB server host and port (defaults: 0.0.0.0 / 8000)
 MDB_HOST=0.0.0.0
 MDB_PORT=8000
 ```
 
-### 3. Sync the schema into Pinecone
+### 3. Sync the schema into ChromaDB
 
-Schema syncing is on-demand via the `resync_schema` MCP tool, not scheduled automatically. The first invocation indexes all tables; subsequent calls only re-embed tables whose structure has changed since the last sync.
+Schema syncing is on-demand via the `resync_schema` MCP tool, not scheduled automatically. The first invocation indexes all tables into ChromaDB; subsequent calls only re-embed tables whose structure has changed since the last sync.
 
 You can trigger it from any MCP client (e.g. MCP Inspector) or programmatically via the MCP endpoint.
 
@@ -137,6 +137,7 @@ MDB_PORT=9000 python -m app.server
    - `get_schema()` → full database schema
    - `search_schema(query)` → semantically relevant tables
    - `get_table_context(table_name)` → detailed table context
+   - `resync_schema()` → sync database schema with ChromaDB
 
 ## MCP Tools
 
@@ -146,7 +147,7 @@ MDB_PORT=9000 python -m app.server
 | `get_schema()` | Returns the complete database schema with columns, types, PKs, and FKs |
 | `search_schema(query)` | Semantic search — finds tables relevant to a natural-language query, then expands through foreign-key relationships |
 | `get_table_context(table_name)` | Returns detailed context for a specific table including columns, types, constraints, and relationships |
-| `resync_schema()` | Incrementally syncs the Pinecone vector index with the current database schema — adds new tables, re-embeds changed tables, removes stale vectors |
+| `resync_schema()` | Incrementally syncs the local ChromaDB vector store with the current database schema — adds new tables, re-embeds changed tables, removes stale vectors |
 
 ## Project Structure
 
@@ -156,7 +157,7 @@ MDB/
 │   ├── database.py        # PostgreSQL introspection via SQLAlchemy
 │   ├── embeddings.py      # Gemini embedding generation
 │   ├── server.py          # MCP server (Streamable HTTP) with tool definitions
-│   └── vector_store.py    # Pinecone indexing and semantic search
+│   └── vector_store.py    # ChromaDB indexing and semantic search
 ├── .env.example           # Environment variable template
 ├── .gitignore
 └── requirements.txt       # Python dependencies
@@ -169,6 +170,7 @@ MDB follows the standard MCP deployment model: **self-hosted, one instance per u
 This means:
 
 - **Credentials stay on the user's machine** — no database URLs or API keys are sent to a third party.
+- **Vectors stay local** — stored securely on disk via ChromaDB.
 - **Each instance connects to one database** — configured via `DATABASE_URL` in `.env`.
 - **The MCP client points to the user's server** — e.g. `http://localhost:8000/mcp` in Claude Desktop, Cursor, or any MCP-compatible client.
 - **Schema syncing is on-demand** via the `resync_schema` MCP tool, not scheduled automatically.

@@ -27,5 +27,8 @@ ENV/
 .DS_Store
 Thumbs.db
 
+# Local vector database storage
+chroma_data/
+
 # Test artifacts
 .pytest_cache/

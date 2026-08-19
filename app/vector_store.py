@@ -2,33 +2,28 @@ import hashlib
 import json
 import os
 
+import chromadb
 from dotenv import load_dotenv
-from pinecone import Pinecone, ServerlessSpec
 
-from app.embeddings import embed_document, embed_query
 from app.database import get_schema
+from app.embeddings import embed_document, embed_query
 
 load_dotenv()
 
-pc = Pinecone(api_key=os.getenv("PINECONE_API_KEY"))
-
-INDEX_NAME = os.getenv("PINECONE_INDEX_NAME", "mdb-schema")
-DIMENSION = 768
+DATA_DIR = os.getenv("CHROMA_DATA_DIR", "./chroma_data")
+_chroma_client = None
 
 
-def get_index():
-    if not pc.has_index(INDEX_NAME):
-        pc.create_index(
-            name=INDEX_NAME,
-            dimension=DIMENSION,
-            metric="cosine",
-            spec=ServerlessSpec(
-                cloud="aws",
-                region="us-east-1"
-            )
-        )
+def get_collection():
+    global _chroma_client
 
-    return pc.Index(INDEX_NAME)
+    if _chroma_client is None:
+        _chroma_client = chromadb.PersistentClient(path=DATA_DIR)
+
+    return _chroma_client.get_or_create_collection(
+        name="mdb-schema",
+        metadata={"hnsw:space": "cosine"},
+    )
 
 
 def build_document(table_name, table_data):
@@ -108,43 +103,39 @@ def compute_table_hash(table_name: str, table_data: dict) -> str:
 
 def get_indexed_table_hashes() -> dict[str, str]:
     """Returns {table_name: schema_hash} for every vector currently in
-    the Pinecone index. index.list() is a paginated generator -- iterate
-    it fully rather than assuming a single page.
+    the ChromaDB collection.
     """
-    index = get_index()
+    collection = get_collection()
+    data = collection.get(include=["metadatas"])
 
-    ids = [
-        item.id
-        for page in index.list()
-        for item in page.vectors
-    ]
-    if not ids:
+    if not data or not data.get("ids"):
         return {}
 
-    fetch_result = index.fetch(ids=ids)
-
     hashes = {}
-    for vector_id, vector in fetch_result.vectors.items():
+    for vector_id, metadata in zip(data["ids"], data["metadatas"]):
         table_name = vector_id.removeprefix("table:")
-        schema_hash = vector.metadata.get("schema_hash")
-        if schema_hash:
-            hashes[table_name] = schema_hash
+        if metadata and "schema_hash" in metadata:
+            hashes[table_name] = metadata["schema_hash"]
     return hashes
 
 
 def sync_schema() -> dict:
-    """Reconciles the Pinecone index with the live database schema.
+    """Reconciles the ChromaDB collection with the live database schema.
     Only embeds new or changed tables; skips unchanged ones; removes
     vectors for tables that no longer exist in the database.
     """
-    index = get_index()
+    collection = get_collection()
     schema = get_schema()
     stored_hashes = get_indexed_table_hashes()
 
     live_table_names = set(schema.keys())
     stored_table_names = set(stored_hashes.keys())
 
-    to_upsert = []
+    ids_to_upsert = []
+    embeddings_to_upsert = []
+    metadatas_to_upsert = []
+    documents_to_upsert = []
+
     added = 0
     updated = 0
     unchanged = 0
@@ -163,22 +154,26 @@ def sync_schema() -> dict:
 
         document = build_document(table_name, table_data)
         embedding = embed_document(document)
-        to_upsert.append({
-            "id": f"table:{table_name}",
-            "values": embedding,
-            "metadata": {
-                "table": table_name,
-                "document": document,
-                "schema_hash": current_hash,
-            },
-        })
 
-    if to_upsert:
-        index.upsert(vectors=to_upsert)
+        ids_to_upsert.append(f"table:{table_name}")
+        embeddings_to_upsert.append(embedding)
+        metadatas_to_upsert.append({
+            "table": table_name,
+            "schema_hash": current_hash,
+        })
+        documents_to_upsert.append(document)
+
+    if ids_to_upsert:
+        collection.upsert(
+            ids=ids_to_upsert,
+            embeddings=embeddings_to_upsert,
+            metadatas=metadatas_to_upsert,
+            documents=documents_to_upsert,
+        )
 
     stale_tables = stored_table_names - live_table_names
     if stale_tables:
-        index.delete(ids=[f"table:{name}" for name in stale_tables])
+        collection.delete(ids=[f"table:{name}" for name in stale_tables])
 
     return {
         "added": added,
@@ -191,28 +186,28 @@ def sync_schema() -> dict:
 def search_schema(query: str, top_k: int = 3):
     """Semantic search for relevant schema documents.
 
-    Retrieves the top-k most relevant tables via Pinecone,
+    Retrieves the top-k most relevant tables via ChromaDB,
     then expands through foreign-key relationships to include
     connected tables in the result.
 
     Returns a list of schema document strings.
     """
-    index = get_index()
-
+    collection = get_collection()
     query_embedding = embed_query(query)
 
-    results = index.query(
-        vector=query_embedding,
-        top_k=top_k,
-        include_metadata=True
+    results = collection.query(
+        query_embeddings=[query_embedding],
+        n_results=top_k,
+        include=["metadatas"],
     )
 
-    matches = results.matches
+    metadatas = results.get("metadatas", [[]])[0]
 
     # Tables found through semantic search
     selected_tables = {
-        match["metadata"]["table"]
-        for match in matches
+        meta["table"]
+        for meta in metadatas
+        if meta and "table" in meta
     }
 
     # Expand through relationships
@@ -225,9 +220,7 @@ def search_schema(query: str, top_k: int = 3):
             continue
 
         for relationship in table["relationships"]:
-            selected_tables.add(
-                relationship["references_table"]
-            )
+            selected_tables.add(relationship["references_table"])
 
     # Build final context
     context = []
@@ -238,8 +231,6 @@ def search_schema(query: str, top_k: int = 3):
         if not table_data:
             continue
 
-        context.append(
-            build_document(table_name, table_data)
-        )
+        context.append(build_document(table_name, table_data))
 
     return context

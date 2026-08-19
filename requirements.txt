@@ -1,6 +1,6 @@
 python-dotenv
 google-genai
-pinecone
+chromadb
 sqlalchemy>=2.0
 psycopg2-binary
 mcp
