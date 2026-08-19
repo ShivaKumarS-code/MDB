@@ -108,6 +108,20 @@ MDB_PORT=9000 python -m app.server
    - `get_table_context(table_name)` → detailed table context
    - `resync_schema()` → sync database schema with ChromaDB
 
+### 6. Connect to your AI Client / Agent
+
+Add MDB to your AI environment's MCP configuration (e.g. `mcp_config.json` or `claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "mdb": {
+      "serverUrl": "http://localhost:8000/mcp"
+    }
+  }
+}
+```
+
 ## MCP Tools
 
 | Tool | Description |
