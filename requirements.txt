@@ -1,0 +1,8 @@
+python-dotenv
+google-genai
+pinecone
+sqlalchemy>=2.0
+psycopg2-binary
+mcp
+pytest
+pytest-mock
